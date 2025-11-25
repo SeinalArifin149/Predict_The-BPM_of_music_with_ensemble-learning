@@ -1,25 +1,49 @@
-import joblib
 import streamlit as st
+import joblib
 import pandas as pd
 from sklearn.metrics import mean_absolute_error
 import time
+import os
+import gdown  # <--- WAJIB: Pastikan gdown ada di requirements.txt
 
 # --- 1. KONFIGURASI HALAMAN ---
 st.set_page_config(page_title="Prediksi BPM Musik", layout="wide")
 
+# ==========================================
+# KONFIGURASI GOOGLE DRIVE (FOLDER LINK)
+# ==========================================
+# Link Folder yang abang kasih
+GDRIVE_URL = "https://drive.google.com/drive/u/0/folders/1M1UQIXIfBmdgdPcg-lnwtInYzWkjzt-K"
+LOCAL_CSV_NAME = 'train.csv'
+
 # --- 2. FUNGSI LOADING BERAT (CACHE) ---
-# Fungsi ini melakukan pekerjaan berat: Load Model & Hitung MAE Global
-# @st.cache_resource memastikan ini cuma jalan sekali di server
 @st.cache_resource
 def load_heavy_resources():
     try:
-        # Load Model
+        # A. Cek & Download train.csv dari Folder GDrive
+        if not os.path.exists(LOCAL_CSV_NAME):
+            print(f"Sedang mendownload data dari Folder GDrive: {GDRIVE_URL}")
+            
+            # Deteksi apakah linknya Folder atau File biasa
+            if "/folders/" in GDRIVE_URL:
+                # Kalau link folder, pakai download_folder
+                # output="." artinya download isinya ke folder project saat ini
+                gdown.download_folder(url=GDRIVE_URL, output=".", quiet=False, use_cookies=False)
+            else:
+                # Kalau link file biasa
+                gdown.download(url=GDRIVE_URL, output=LOCAL_CSV_NAME, quiet=False)
+
+        # B. Cek File Keberadaan (Validasi)
+        if not os.path.exists("my_model.pkl"):
+            raise FileNotFoundError("File 'my_model.pkl' tidak ditemukan (Pastikan diupload ke GitHub).")
+        if not os.path.exists(LOCAL_CSV_NAME):
+            raise FileNotFoundError(f"Gagal download '{LOCAL_CSV_NAME}' dari GDrive. Pastikan file ada di dalam folder drive tersebut.")
+
+        # C. Load Resources
         model = joblib.load("my_model.pkl")
+        df = pd.read_csv(LOCAL_CSV_NAME)
         
-        # Load Data Train
-        df = pd.read_csv('train.csv')
-        
-        # Hitung MAE Global (Proses Lama)
+        # D. Hitung MAE Global
         target_col = "BeatsPerMinute"
         cols_to_drop = ["id", target_col]
         features = [col for col in df.columns if col not in cols_to_drop]
@@ -35,7 +59,6 @@ def load_heavy_resources():
         return None, None, None, None, str(e)
 
 # --- 3. LOGIKA SPLASH SCREEN (ANIMASI LOADING AWAL) ---
-# Kita cek apakah data sudah siap di session_state?
 if 'app_ready' not in st.session_state:
     st.session_state['app_ready'] = False
 
@@ -44,20 +67,25 @@ if not st.session_state['app_ready']:
     placeholder = st.empty()
     with placeholder.container():
         st.markdown("## 🎵 Sedang Mempersiapkan AI...")
-        st.info("Sistem sedang membaca pola audio dan menghitung akurasi model. Mohon tunggu...")
+        st.info("Sistem sedang mengunduh data training dari Google Drive & menghitung akurasi. Mohon tunggu...")
         
         # Animasi Progress Bar
         bar = st.progress(0)
-        for i in range(1, 101):
-            time.sleep(0.015) # Mainkan angka ini kalau mau loading lebih lama/cepat
+        
+        # Simulasi loading bar (biar user tau sistem jalan)
+        for i in range(1, 30):
+            time.sleep(0.01)
             bar.progress(i)
         
         # Panggil Fungsi Berat
         model, df, features, mae_val, err = load_heavy_resources()
         
+        # Langsung 100% kalau selesai
+        bar.progress(100)
+        
         if err:
             st.error(f"Gagal memuat sistem: {err}")
-            st.warning("Pastikan file 'my_model.pkl' dan 'train.csv' ada di folder yang sama.")
+            st.warning("Tips: Pastikan link GDrive Folder abang aksesnya 'Anyone with the link' (Viewer).")
             st.stop()
         
         # Simpan ke Session State
@@ -67,7 +95,7 @@ if not st.session_state['app_ready']:
         st.session_state['mae_global'] = mae_val
         st.session_state['app_ready'] = True
         
-        st.success("✅ Sistem Siap!")
+        st.success("✅ Data Siap!")
         time.sleep(0.5)
     
     # Hapus loading screen dan refresh ke menu utama
@@ -115,7 +143,6 @@ def buat_input_sinkron(label, col_name):
     if is_int:
         step, fmt, min_v, max_v = 100, "%d", int(min_v), int(max_v)
     else:
-        # Perbaikan di sini: tambahkan min_v dan max_v di sebelah kiri
         step, fmt, min_v, max_v = 0.001, "%.3f", float(min_v), float(max_v)
         
     with c1:
