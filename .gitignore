@@ -1,7 +1,0 @@
-.venv/
-test.csv
-train.csv
-test.csv
-sample_submission.csv 
-__pycache__/
-*.pyc
