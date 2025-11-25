@@ -1,146 +1,173 @@
-import streamlit as st
 import joblib
+import streamlit as st
 import pandas as pd
 from sklearn.metrics import mean_absolute_error
+import time
 
-# --- KONFIGURASI HALAMAN ---
+# --- 1. KONFIGURASI HALAMAN ---
 st.set_page_config(page_title="Prediksi BPM Musik", layout="wide")
 
+# --- 2. FUNGSI LOADING BERAT (CACHE) ---
+# Fungsi ini melakukan pekerjaan berat: Load Model & Hitung MAE Global
+# @st.cache_resource memastikan ini cuma jalan sekali di server
+@st.cache_resource
+def load_heavy_resources():
+    try:
+        # Load Model
+        model = joblib.load("my_model.pkl")
+        
+        # Load Data Train
+        df = pd.read_csv('train.csv')
+        
+        # Hitung MAE Global (Proses Lama)
+        target_col = "BeatsPerMinute"
+        cols_to_drop = ["id", target_col]
+        features = [col for col in df.columns if col not in cols_to_drop]
+        
+        X_all = df[features]
+        y_true = df[target_col]
+        y_pred_all = model.predict(X_all)
+        mae_global = mean_absolute_error(y_true, y_pred_all)
+        
+        return model, df, features, mae_global, None
+
+    except Exception as e:
+        return None, None, None, None, str(e)
+
+# --- 3. LOGIKA SPLASH SCREEN (ANIMASI LOADING AWAL) ---
+# Kita cek apakah data sudah siap di session_state?
+if 'app_ready' not in st.session_state:
+    st.session_state['app_ready'] = False
+
+if not st.session_state['app_ready']:
+    # --- TAMPILAN LOADING SCREEN ---
+    placeholder = st.empty()
+    with placeholder.container():
+        st.markdown("## 🎵 Sedang Mempersiapkan AI...")
+        st.info("Sistem sedang membaca pola audio dan menghitung akurasi model. Mohon tunggu...")
+        
+        # Animasi Progress Bar
+        bar = st.progress(0)
+        for i in range(1, 101):
+            time.sleep(0.015) # Mainkan angka ini kalau mau loading lebih lama/cepat
+            bar.progress(i)
+        
+        # Panggil Fungsi Berat
+        model, df, features, mae_val, err = load_heavy_resources()
+        
+        if err:
+            st.error(f"Gagal memuat sistem: {err}")
+            st.warning("Pastikan file 'my_model.pkl' dan 'train.csv' ada di folder yang sama.")
+            st.stop()
+        
+        # Simpan ke Session State
+        st.session_state['model'] = model
+        st.session_state['df'] = df
+        st.session_state['features'] = features
+        st.session_state['mae_global'] = mae_val
+        st.session_state['app_ready'] = True
+        
+        st.success("✅ Sistem Siap!")
+        time.sleep(0.5)
+    
+    # Hapus loading screen dan refresh ke menu utama
+    placeholder.empty()
+    st.rerun()
+
+# =========================================================
+# --- 4. HALAMAN UTAMA (Hanya muncul setelah loading) ---
+# =========================================================
+
+# Ambil data dari memory
+model = st.session_state['model']
+df = st.session_state['df']
+features = st.session_state['features']
+mae_global = st.session_state['mae_global']
+
 st.title("🎧 Predict Beats-Per-Minute (BPM)")
-st.write("Masukkan fitur audio di bawah, AI akan menebak angka BPM-nya.")
+st.write("Geser Slider atau Ketik Angka untuk memprediksi tempo lagu.")
 
-# --- 1. LOAD MODEL & DATA ---
-try:
-    model = joblib.load("my_model.pkl")
-except FileNotFoundError:
-    st.error("❌ Model 'my_model.pkl' tidak ditemukan bang.")
-    st.stop()
+# --- FUNGSI SINKRONISASI ---
+def update_input(key):
+    st.session_state[f"input_{key}"] = st.session_state[f"slider_{key}"]
 
-try:
-    df = pd.read_csv('test.csv')
-except FileNotFoundError:
-    st.error("❌ File 'test.csv' gak ketemu bang.")
-    st.stop()
+def update_slider(key):
+    st.session_state[f"slider_{key}"] = st.session_state[f"input_{key}"]
 
-# --- 2. SETUP INPUT (9 FITUR) ---
-# Format 3 angka belakang koma
-koma = 3 
+# --- INISIALISASI NILAI AWAL ---
+for feat in features:
+    if f"slider_{feat}" not in st.session_state:
+        default_val = float(df[feat].mean())
+        if "Duration" in feat or "Year" in feat:
+             default_val = int(default_val)
+        st.session_state[f"slider_{feat}"] = default_val
+        st.session_state[f"input_{feat}"] = default_val
 
-# Bagi jadi 3 Baris (3 kolom per baris)
-row1 = st.columns(3)
-row2 = st.columns(3)
-row3 = st.columns(3)
+# --- BUILD UI WIDGET ---
+def buat_input_sinkron(label, col_name):
+    c1, c2 = st.columns([3, 1]) 
+    min_v = float(df[col_name].min())
+    max_v = float(df[col_name].max())
+    
+    # Deteksi Integer
+    is_int = df[col_name].dtype == 'int64' and df[col_name].mean() > 100
+    
+    if is_int:
+        step, fmt, min_v, max_v = 100, "%d", int(min_v), int(max_v)
+    else:
+        # Perbaikan di sini: tambahkan min_v dan max_v di sebelah kiri
+        step, fmt, min_v, max_v = 0.001, "%.3f", float(min_v), float(max_v)
+        
+    with c1:
+        st.slider(f"{label}", min_v, max_v, step=step, format=fmt,
+                  key=f"slider_{col_name}", on_change=update_input, args=(col_name,))
+    with c2:
+        st.number_input("Input", min_v, max_v, step=step, format=fmt,
+                        key=f"input_{col_name}", on_change=update_slider, args=(col_name,),
+                        label_visibility="collapsed")
 
-# === BARIS 1 ===
-with row1[0]:
-    RhythmScore_in = st.slider("RhythmScore", 
-        min_value=round(float(df['RhythmScore'].min()), koma), 
-        max_value=round(float(df['RhythmScore'].max()), koma), 
-        value=round(float(df['RhythmScore'].mean()), koma), format="%.3f")
-with row1[1]:
-    AudioLoudness_in = st.slider("AudioLoudness", 
-        min_value=round(float(df['AudioLoudness'].min()), koma), 
-        max_value=round(float(df['AudioLoudness'].max()), koma), 
-        value=round(float(df['AudioLoudness'].mean()), koma), format="%.3f")
-with row1[2]:
-    VocalContent_in = st.slider("VocalContent", 
-        min_value=round(float(df['VocalContent'].min()), koma), 
-        max_value=round(float(df['VocalContent'].max()), koma), 
-        value=round(float(df['VocalContent'].mean()), koma), format="%.3f")
+# Tampilkan Layout 2 Kolom
+half = len(features) // 2
+col_left, col_right = st.columns(2, gap="large")
 
-# === BARIS 2 ===
-with row2[0]:
-    AcousticQuality_in = st.slider("AcousticQuality", 
-        min_value=round(float(df['AcousticQuality'].min()), koma), 
-        max_value=round(float(df['AcousticQuality'].max()), koma), 
-        value=round(float(df['AcousticQuality'].mean()), koma), format="%.3f")
-with row2[1]:
-    InstrumentalScore_in = st.slider("InstrumentalScore", 
-        min_value=round(float(df['InstrumentalScore'].min()), koma), 
-        max_value=round(float(df['InstrumentalScore'].max()), koma), 
-        value=round(float(df['InstrumentalScore'].mean()), koma), format="%.3f")
-with row2[2]:
-    LivePerformanceLikelihood_in = st.slider("Live Perf. Likelihood", 
-        min_value=round(float(df['LivePerformanceLikelihood'].min()), koma), 
-        max_value=round(float(df['LivePerformanceLikelihood'].max()), koma), 
-        value=round(float(df['LivePerformanceLikelihood'].mean()), koma), format="%.3f")
+with col_left:
+    st.subheader("🎵 Audio Features A")
+    for feat in features[:half]:
+        buat_input_sinkron(feat, feat)
 
-# === BARIS 3 ===
-with row3[0]:
-    MoodScore_in = st.slider("MoodScore", 
-        min_value=round(float(df['MoodScore'].min()), koma), 
-        max_value=round(float(df['MoodScore'].max()), koma), 
-        value=round(float(df['MoodScore'].mean()), koma), format="%.3f")
-
-with row3[1]:
-    # --- FITUR YANG TADI HILANG (TrackDurationMs) ---
-    # Karena ini milidetik (integer besar), kita gak pake koma, dan stepnya 1000ms
-    TrackDurationMs_in = st.slider("TrackDurationMs (Durasi)", 
-        min_value=int(df['TrackDurationMs'].min()), 
-        max_value=int(df['TrackDurationMs'].max()), 
-        value=int(df['TrackDurationMs'].mean()), 
-        step=1000)
-
-with row3[2]:
-    Energy_in = st.slider("Energy", 
-        min_value=round(float(df['Energy'].min()), koma), 
-        max_value=round(float(df['Energy'].max()), koma), 
-        value=round(float(df['Energy'].mean()), koma), format="%.3f")
+with col_right:
+    st.subheader("🎹 Audio Features B")
+    for feat in features[half:]:
+        buat_input_sinkron(feat, feat)
 
 st.divider()
 
-# --- 3. EKSEKUSI ---
-col_btn, col_result = st.columns([1, 2])
+# --- 5. EKSEKUSI (INSTANT PREDICTION) ---
+if st.button("🚀 TEBAK BPM SEKARANG", type="primary", use_container_width=True):
+    
+    # Ambil Input
+    input_data = [st.session_state[f"input_{feat}"] for feat in features]
+    
+    # PENTING: Bungkus jadi DataFrame biar nama kolom kebaca model
+    X_input = pd.DataFrame([input_data], columns=features)
 
-with col_btn:
-    predict_btn = st.button("🎵 TEBAK BPM", use_container_width=True)
+    # Prediksi
+    hasil_prediksi = model.predict(X_input)[0]
+    
+    # Hitung Akurasi (MAE sudah dihitung di loading awal)
+    acc_val = max(0, 100 - mae_global) 
 
-if predict_btn:
-    # Urutan ini HARUS SAMA dengan urutan kolom di CSV abang (selain ID)
-    # RhythmScore, AudioLoudness, VocalContent, AcousticQuality, InstrumentalScore, LivePerformanceLikelihood, MoodScore, TrackDurationMs, Energy
-    X_input = [[
-        RhythmScore_in, 
-        AudioLoudness_in, 
-        VocalContent_in, 
-        AcousticQuality_in,
-        InstrumentalScore_in, 
-        LivePerformanceLikelihood_in, 
-        MoodScore_in, 
-        TrackDurationMs_in, # <--- Sudah dimasukkan!
-        Energy_in
-    ]]
-
-    try:
-        # Prediksi
-        predicted_bpm = model.predict(X_input)[0]
-        
-        # Cek apakah bisa hitung MAE (Butuh kolom target asli)
-        mae_text = "N/A (Test Data)"
-        target_col = 'BeatsPerMinute' 
-        
-        if target_col in df.columns:
-            # Ambil fitur yg sama persis buat test
-            cols_urutan = ['RhythmScore', 'AudioLoudness', 'VocalContent', 'AcousticQuality',
-                        'InstrumentalScore', 'LivePerformanceLikelihood', 'MoodScore', 'TrackDurationMs', 'Energy']
-            X_test_all = df[cols_urutan]
-            y_true = df[target_col]
-            y_pred_all = model.predict(X_test_all)
-            mae_val = mean_absolute_error(y_true, y_pred_all)
-            mae_text = f"{mae_val:.3f}"
-        else:
-             mae_note = "(File test.csv tidak punya kolom 'BeatsPerMinute' buat ngecek jawaban)"
-
-        with col_result:
-            st.success("✅ Prediksi Selesai!")
-            
-            c1, c2 = st.columns(2)
-            with c1:
-                st.metric("Prediksi BPM", f"{predicted_bpm:.2f}")
-            with c2:
-                st.metric("MAE (Error)", mae_text, help="Hanya muncul kalau ada kunci jawaban di CSV")
-            
-            if mae_text == "N/A (Test Data)":
-                st.caption(mae_note)
-            
-    except Exception as e:
-        st.error(f"Masih error bang: {e}")
+    # Tampilkan Hasil
+    st.balloons() # Efek Balon
+    st.success("✅ Prediksi Selesai!")
+    
+    m1, m2, m3 = st.columns(3)
+    with m1:
+        st.metric("Prediksi BPM", f"{hasil_prediksi:.2f}")
+    with m2:
+        st.metric("Model MAE", f"{mae_global:.3f}", 
+                  delta=f"-{mae_global:.3f}", delta_color="inverse",
+                  help="Error rata-rata model (dihitung saat loading awal)")
+    with m3:
+        st.metric("Estimasi Akurasi", f"{acc_val:.2f}", 
+                  delta=f"{acc_val:.2f}")
