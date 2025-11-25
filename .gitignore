@@ -2,6 +2,7 @@
 test.csv
 train.csv
 test.csv
+submisson_new_logic.csv
 sample_submission.csv 
 __pycache__/
 *.pyc
