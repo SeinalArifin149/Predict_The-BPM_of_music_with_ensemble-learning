@@ -26,21 +26,18 @@ def load_heavy_resources():
             
             # Deteksi apakah linknya Folder atau File biasa
             if "/folders/" in GDRIVE_URL:
-                # Kalau link folder, pakai download_folder
-                # output="." artinya download isinya ke folder project saat ini
                 gdown.download_folder(url=GDRIVE_URL, output=".", quiet=False, use_cookies=False)
             else:
-                # Kalau link file biasa
                 gdown.download(url=GDRIVE_URL, output=LOCAL_CSV_NAME, quiet=False)
 
         # B. Cek File Keberadaan (Validasi)
-        if not os.path.exists("my_model.pkl"):
-            raise FileNotFoundError("File 'my_model.pkl' tidak ditemukan (Pastikan diupload ke GitHub).")
+        if not os.path.exists("my_super_stack_model.pkl"):
+            raise FileNotFoundError("File 'my_super_stack_model.pkl' tidak ditemukan (Pastikan diupload ke GitHub).")
         if not os.path.exists(LOCAL_CSV_NAME):
             raise FileNotFoundError(f"Gagal download '{LOCAL_CSV_NAME}' dari GDrive. Pastikan file ada di dalam folder drive tersebut.")
 
         # C. Load Resources
-        model = joblib.load("my_model.pkl")
+        model = joblib.load("my_super_stack_model.pkl")
         df = pd.read_csv(LOCAL_CSV_NAME)
         
         # D. Hitung MAE Global
