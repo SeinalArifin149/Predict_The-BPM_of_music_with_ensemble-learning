@@ -7,4 +7,4 @@ xgboost
 streamlit
 gdown
 catboost 
-altair==6.0.0
+altair==4.2.2
